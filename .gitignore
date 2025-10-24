@@ -1,0 +1,23 @@
+# Python cache & compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.env/
+
+# macOS metadata
+.DS_Store
+
+# IDE settings
+.vscode/
+.idea/
+
+# Logs or temporary files
+*.log
+*.tmp
+
+# System folders
+__MACOSX/
