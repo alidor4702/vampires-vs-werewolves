@@ -1,10 +1,17 @@
 # gui/board.py
+from ast import main
 import tkinter as tk
 from tkinter import simpledialog, messagebox
 from core.config import GameConfig
 from core.state import GameState
 import random
 from core.random_agent import RandomAgent
+from core.mcts_agent import MCTSAgent
+from core.heuristic_agent import HeuristicAgent
+from core.simple_agent import SimpleHeuristicAgent
+
+
+
 
 
 
@@ -38,10 +45,12 @@ class GameBoard(tk.Frame):
         self.after(300, self.refresh_log)
 
         # 🔹 AI agent initialization
-        self.ai_agent = RandomAgent() if self.config.mode == "ai" else None
+        self.ai_agent = HeuristicAgent() if self.config.mode == "ai" else None
 
 
     # --------------------------------------------------------------
+
+    
     def create_widgets(self):
         top = tk.Frame(self)
         top.pack(anchor="w", fill="x")
@@ -52,27 +61,47 @@ class GameBoard(tk.Frame):
         self.status = tk.Label(top, text=f"Turn: {self.state.turn}", width=20)
         self.status.pack(side="left", padx=5)
 
+        # Create main horizontal split
         main = tk.PanedWindow(self, orient="horizontal")
         main.pack(fill="both", expand=True)
 
-        # ---- left log pane ----
-        log_frame = tk.Frame(main)
+        # ---------------- LEFT: LOG PANEL ----------------
+        log_frame = tk.Frame(main, bg="#857f70")
         tk.Label(log_frame, text="Game Log", font=("Helvetica", 12, "bold")).pack(anchor="w")
         self.log_widget = tk.Text(log_frame, width=40, height=30, state="disabled", bg="#857f70")
         self.log_widget.pack(fill="both", expand=True)
         main.add(log_frame, minsize=200)
 
-        # ---- right canvas ----
-        canvas_frame = tk.Frame(main)
-        main.add(canvas_frame)
-
+        # ---------------- MIDDLE: BOARD CANVAS ----------------
+        canvas_frame = tk.Frame(main, bg="white")
         self.canvas = tk.Canvas(canvas_frame, bg="white")
         self.canvas.pack(fill="both", expand=True)
         self.canvas.configure(scrollregion=(0, 0,
             self.config.grid_cols * self.cell_size,
             self.config.grid_rows * self.cell_size))
+        main.add(canvas_frame)  # <-- add board second (middle section)
 
-        # Bindings
+        # ---------------- RIGHT: HEATMAP PANEL ----------------
+        heat_frame = tk.Frame(main, bg="#222")
+        tk.Label(
+            heat_frame,
+            text="AI Heat Map",
+            font=("Helvetica", 12, "bold"),
+            fg="white",
+            bg="#222"
+        ).pack(anchor="w")
+
+        self.heat_canvas = tk.Canvas(heat_frame, bg="black", width=250, height=250)
+        self.heat_canvas.pack(fill="both", expand=True)
+        self.heat_canvas.bind("<Button-1>", self.on_heat_click)
+
+        self.heat_map_mode = "heat"
+        self.last_heat = None
+        self.last_path = None
+
+        main.add(heat_frame, minsize=250)  # <-- add heatmap last (right side)
+
+        # ---------------- BINDINGS ----------------
         self.canvas.bind("<Button-1>", self.on_click)
         self.canvas.bind("<MouseWheel>", self.on_zoom)
         self.canvas.bind("<Button-4>", self.on_zoom)
@@ -228,6 +257,99 @@ class GameBoard(tk.Frame):
             self.check_victory()
 
     # --------------------------------------------------------------
+    def draw_heatmap(self, heat_data, title="Heat Map"):
+        """Draw a properly scaled heat map (2-D numpy array) in the right panel."""
+        if heat_data is None:
+            return
+        self.heat_canvas.delete("all")
+
+        # --- get board & heatmap sizes ---
+        R, C = heat_data.shape
+        board_R, board_C = self.state.rows, self.state.cols
+
+        # --- dynamically fit heatmap into canvas ---
+        canvas_w = max(50, self.heat_canvas.winfo_width() or 250)
+        canvas_h = max(50, self.heat_canvas.winfo_height() or 250)
+
+        # maintain aspect ratio consistent with board grid
+        cell_ratio = board_C / board_R
+        target_ratio = canvas_w / canvas_h
+        if cell_ratio > target_ratio:
+            # board wider than tall
+            w = canvas_w
+            h = int(w / cell_ratio)
+        else:
+            # board taller than wide
+            h = canvas_h
+            w = int(h * cell_ratio)
+
+        # Center the heatmap inside the canvas safely
+        x_offset = (canvas_w - w) / 2
+        y_offset = (canvas_h - h) / 2
+
+        cw = w / C
+        ch = h / R
+
+        vmax, vmin = float(heat_data.max()), float(heat_data.min())
+        rng = max(1e-9, vmax - vmin)
+
+        def color(val):
+            # blue (cold) → red (hot)
+            t = (val - vmin) / rng
+            r = int(255 * t)
+            b = int(255 * (1 - t))
+            return f"#{r:02x}00{b:02x}"
+
+        # --- draw safely inside canvas bounds ---
+        for r in range(R):
+            for c in range(C):
+                x1 = x_offset + c * cw
+                y1 = y_offset + r * ch
+                x2 = x1 + cw
+                y2 = y1 + ch
+                self.heat_canvas.create_rectangle(
+                    x1, y1, x2, y2,
+                    fill=color(heat_data[r, c]),
+                    outline=""
+                )
+
+        # title
+        self.heat_canvas.create_text(
+            x_offset + 8, y_offset + 8,
+            anchor="nw",
+            text=title,
+            fill="white",
+            font=("Helvetica", 10, "bold")
+        )
+
+
+    # --------------------------------------------------------------
+    def on_heat_click(self, event):
+        """When user clicks heatmap, toggle path view or back."""
+        if self.last_heat is None:
+            return
+        w = self.heat_canvas.winfo_width()
+        h = self.heat_canvas.winfo_height()
+        R, C = self.last_heat.shape
+        cw, ch = w / C, h / R
+        c = int(event.x // cw)
+        r = int(event.y // ch)
+        if not (0 <= r < R and 0 <= c < C):
+            return
+
+        if self.heat_map_mode == "heat":
+            # show path heat for that cell
+            if hasattr(self.ai_agent, "_best_path_heat"):
+                self.last_path = self.ai_agent._best_path_heat(r, c)
+                self.draw_heatmap(self.last_path, title=f"Path from ({r},{c})")
+                self.heat_map_mode = "path"
+        else:
+            # back to main heat map
+            self.draw_heatmap(self.last_heat, title="Heat Map")
+            self.heat_map_mode = "heat"
+
+
+    # --------------------------------------------------------------
     def on_pan_start(self, event):
         self.drag_start = (self.canvas.canvasx(event.x), self.canvas.canvasy(event.y))
         self.canvas.config(cursor="fleur")
@@ -321,11 +443,22 @@ class GameBoard(tk.Frame):
         import time
 
         actions = self.ai_agent.select_action(self.state)
+        # 🔹 visualize heat map if agent provides one
+        if hasattr(self.ai_agent, "get_heatmap"):
+            self.last_heat = self.ai_agent.get_heatmap()
+            if self.last_heat is not None:
+                self.draw_heatmap(self.last_heat, title="AI Heat Map")
+
         if not actions:
             self.state.add_log("AI chose to skip turn.")
             return
 
         self.state.add_log(f"AI decided {len(actions)} move(s) this turn.")
+
+        if hasattr(self.ai_agent, "debug_messages"):
+            for line in self.ai_agent.debug_messages():
+                self.state.add_log(f"[AI-DBG] {line}")
+
 
         for (r1, c1, r2, c2, num) in actions:
             if not self.state.in_bounds(r1, c1) or not self.state.in_bounds(r2, c2):
