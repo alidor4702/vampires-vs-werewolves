@@ -64,7 +64,7 @@ class MainMenu(tk.Frame):
         frame_mode.pack(pady=10)
         tk.Label(frame_mode, text="Play Against:").pack(side="left", padx=5)
         self.mode_var = tk.StringVar(value="human")
-        ttk.OptionMenu(frame_mode, self.mode_var, "human", "human", "ai").pack(side="left")
+        ttk.OptionMenu(frame_mode, self.mode_var, "human", "human", "AI", "AI_vs_AI").pack(side="left")
 
         # --- Buttons ---
         ttk.Button(self, text="Start Game", command=self.start_game).pack(pady=15)

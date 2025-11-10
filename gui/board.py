@@ -6,7 +6,7 @@ from core.config import GameConfig
 from core.state import GameState
 import random
 from core.random_agent import RandomAgent
-from core.mcts_agent import MCTSAgent
+from core.mcts_agent_new import MCTSAgent
 from core.heuristic_agent import HeuristicAgent
 from core.simple_agent import SimpleHeuristicAgent
 
@@ -45,12 +45,23 @@ class GameBoard(tk.Frame):
         self.after(300, self.refresh_log)
 
         # 🔹 AI agent initialization
-        self.ai_agent = HeuristicAgent() if self.config.mode == "ai" else None
+        if self.config.mode == "AI":
+            self.ai_agent_w = MCTSAgent()  # Werewolves
+            self.ai_agent_v = None  # Vampires (human player)
+        elif self.config.mode == "AI_vs_AI":
+            # AI vs AI mode
+            self.ai_agent_v = MCTSAgent(time_limit=1.9)  # Vampires
+            self.ai_agent_w = HeuristicAgent()  # Werewolves
+        else:
+            self.ai_agent_v = None
+            self.ai_agent_w = None
+        
+        # 🔹 Auto-start if AI vs AI
+        if self.config.mode == "AI_vs_AI":
+            self.after(500, self.auto_play_turn)
 
 
     # --------------------------------------------------------------
-
-    
     def create_widgets(self):
         top = tk.Frame(self)
         top.pack(anchor="w", fill="x")
@@ -79,7 +90,10 @@ class GameBoard(tk.Frame):
         self.canvas.configure(scrollregion=(0, 0,
             self.config.grid_cols * self.cell_size,
             self.config.grid_rows * self.cell_size))
-        main.add(canvas_frame)  # <-- add board second (middle section)
+        
+        # Set minimum width for board
+        board_min_width = self.config.grid_cols * self.cell_size
+        main.add(canvas_frame, minsize=board_min_width, stretch="always")
 
         # ---------------- RIGHT: HEATMAP PANEL ----------------
         heat_frame = tk.Frame(main, bg="#222")
@@ -382,11 +396,35 @@ class GameBoard(tk.Frame):
         self.state.next_turn()
         self.status.config(text=f"Turn: {self.state.turn}")
 
-        # If AI mode and it’s AI’s turn (Werewolves)
-        if self.config.mode == "ai" and self.state.turn == "W" and self.ai_agent:
-            self.run_agent_turn()
-
+        # Check for AI turns
+        if self.config.mode == "AI" and self.state.turn == "W" and self.ai_agent_w:
+            self.run_agent_turn(self.ai_agent_w, "Werewolves")
+        elif self.config.mode == "AI_vs_AI":
+            # Auto-play next turn in AI vs AI mode
+            self.after(500, self.auto_play_turn)
+        
         self.check_victory()
+
+    # --------------------------------------------------------------
+    def auto_play_turn(self):
+        """Automatically play AI turns in AI vs AI mode."""
+        if self.check_victory():
+            return  # Game ended
+        
+        # Execute current AI's turn
+        if self.state.turn == "V" and self.ai_agent_v:
+            self.run_agent_turn(self.ai_agent_v, "Vampires")
+        elif self.state.turn == "W" and self.ai_agent_w:
+            self.run_agent_turn(self.ai_agent_w, "Werewolves")
+        
+        # Next turn
+        self.state.next_turn()
+        self.status.config(text=f"Turn: {self.state.turn}")
+        self.draw_grid()
+        
+        # Continue if game not over
+        if not self.check_victory():
+            self.after(800, self.auto_play_turn)  # 800ms delay between turns
 
     # --------------------------------------------------------------
     def back_to_menu(self):
@@ -438,26 +476,36 @@ class GameBoard(tk.Frame):
         self.draw_grid()
         self.state.add_log("AI turn complete.")
     # --------------------------------------------------------------
-    def run_agent_turn(self):
+    def run_agent_turn(self, agent, agent_name):
         """Execute the current agent’s moves (possibly multiple)."""
         import time
 
-        actions = self.ai_agent.select_action(self.state)
+        actions = agent.select_action(self.state)
         # 🔹 visualize heat map if agent provides one
-        if hasattr(self.ai_agent, "get_heatmap"):
-            self.last_heat = self.ai_agent.get_heatmap()
+        if hasattr(agent, "get_heatmap"):
+            self.last_heat = agent.get_heatmap()
             if self.last_heat is not None:
-                self.draw_heatmap(self.last_heat, title="AI Heat Map")
+                self.draw_heatmap(self.last_heat, title=f"{agent_name} Heat Map")
 
         if not actions:
-            self.state.add_log("AI chose to skip turn.")
+            self.state.add_log(f"{agent_name} AI chose to skip turn.")
             return
 
-        self.state.add_log(f"AI decided {len(actions)} move(s) this turn.")
+        self.state.add_log(f"{agent_name} AI decided {len(actions)} move(s) this turn.")
 
-        if hasattr(self.ai_agent, "debug_messages"):
-            for line in self.ai_agent.debug_messages():
-                self.state.add_log(f"[AI-DBG] {line}")
+        if hasattr(agent, "debug_messages"):
+            for line in agent.debug_messages():
+                self.state.add_log(f"[{agent_name}-DBG] {line}")
+
+        # Display reasoning log if available
+        if hasattr(agent, "log") and isinstance(agent.log, list):
+            # MCTS agent: log is a list
+            for line in agent.log:
+                self.state.add_log(line)
+        elif hasattr(agent, "_last_debug") and agent._last_debug:
+            # HeuristicAgent: _last_debug is a list
+            for line in agent._last_debug:
+                self.state.add_log(line)
 
 
         for (r1, c1, r2, c2, num) in actions:
@@ -467,11 +515,12 @@ class GameBoard(tk.Frame):
                 continue
             moved = self.state.move_group(r1, c1, num, r2, c2)
             if moved:
-                self.state.add_log(f"AI moved {num} from ({r1},{c1}) → ({r2},{c2}).")
+                species = "Vampires" if self.state.turn == "V" else "Werewolves"
+                self.state.add_log(f"{agent_name} ({species}) moved {num} from ({r1},{c1}) → ({r2},{c2}).")
                 self.draw_grid()
                 self.update()
                 time.sleep(0.25)
             else:
-                self.state.add_log(f"AI attempted invalid move from ({r1},{c1}) → ({r2},{c2}).")
+                self.state.add_log(f"{agent_name} attempted invalid move from ({r1},{c1}) → ({r2},{c2}).")
 
-        self.state.add_log("AI turn complete.")
+        self.state.add_log(f"{agent_name} turn complete.")
