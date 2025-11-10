@@ -46,7 +46,7 @@ class GameBoard(tk.Frame):
 
         # 🔹 AI agent initialization
         if self.config.mode == "AI":
-            self.ai_agent_w = MCTSAgent()  # Werewolves
+            self.ai_agent_w = HeuristicAgent()  # Werewolves
             self.ai_agent_v = None  # Vampires (human player)
         elif self.config.mode == "AI_vs_AI":
             # AI vs AI mode
@@ -566,4 +566,3 @@ class GameBoard(tk.Frame):
 
         self.state.add_log(f"{agent_name} turn complete.")
         self.state.add_log("AI turn complete.")
-    
