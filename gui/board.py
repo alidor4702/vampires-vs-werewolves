@@ -391,9 +391,50 @@ class GameBoard(tk.Frame):
         self.selected = None
 
     # --------------------------------------------------------------
+    def log_board_state(self):
+        """Log a concise snapshot of the current board state for debugging AI."""
+        self.state.add_log("=== Board Snapshot ===")
+
+        H = 0; V = 0; W = 0
+        ours = []
+        enemies = []
+
+        for r in range(self.state.rows):
+            for c in range(self.state.cols):
+                cell = self.state.grid[r,c]
+                H += cell.humans
+                V += cell.vampires
+                W += cell.werewolves
+
+                if cell.vampires > 0:
+                    ours.append((r,c,cell.vampires))
+                if cell.werewolves > 0:
+                    enemies.append((r,c,cell.werewolves))
+
+        self.state.add_log(f"Humans total: {H} | Vampires total: {V} | Werewolves total: {W}")
+
+        # Sort by stack size (largest visible threats & power centers)
+        ours_sorted = sorted(ours, key=lambda x:x[2], reverse=True)
+        enemies_sorted = sorted(enemies, key=lambda x:x[2], reverse=True)
+
+        if ours_sorted:
+            self.state.add_log("Largest Our Stacks:")
+            for (r,c,s) in ours_sorted[:5]:
+                self.state.add_log(f"  ({r},{c}) size={s}")
+
+        if enemies_sorted:
+            self.state.add_log("Largest Enemy Stacks:")
+            for (r,c,s) in enemies_sorted[:5]:
+                self.state.add_log(f"  ({r},{c}) size={s}")
+
+        self.state.add_log("===")
+    # --------------------------------------------------------------
+
     def next_turn(self):
         """Advance turn; if AI mode, call the agent."""
         self.state.next_turn()
+        self.log_board_state()
+        
         self.status.config(text=f"Turn: {self.state.turn}")
 
         # Check for AI turns
@@ -524,3 +565,5 @@ class GameBoard(tk.Frame):
                 self.state.add_log(f"{agent_name} attempted invalid move from ({r1},{c1}) → ({r2},{c2}).")
 
         self.state.add_log(f"{agent_name} turn complete.")
+        self.state.add_log("AI turn complete.")
+    
