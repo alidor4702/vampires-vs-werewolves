@@ -1,170 +1,163 @@
-# 🧛‍♂️ Vampires vs Werewolves — AI Battle Arena
+# Vampires vs Werewolves — AI Battle Arena
 
-A turn-based strategy game designed to train, test, and visualize **AI decision-making models** in a controlled environment.  
-Built entirely in **Python (Tkinter + NumPy)**, this project supports **human vs human**, **human vs AI**, and **AI vs AI** modes.  
-
----
-
-## 🎮 Overview
-
-Vampires and Werewolves compete for domination on a grid-based map.  
-Each cell can contain:
-- **Humans** (neutral, convertible units)
-- **Vampires**
-- **Werewolves**
-
-Players take turns moving their creatures to adjacent cells (8 possible directions).  
-Combat and conversion follow probabilistic and deterministic rules inspired by resource-based strategy games.
+A turn-based strategy environment designed to train, test, and visualize AI decision-making models in a controlled grid-based simulation.
+Built in Python (Tkinter + NumPy), the project supports human vs human, human vs AI, and AI vs AI modes.
 
 ---
 
-## ⚙️ Features
+## Overview
+
+Vampires and Werewolves compete for territorial control on a grid map.
+Each cell may contain:
+- Humans (neutral, convertible units)
+- Vampires
+- Werewolves
+
+Players take turns moving their units to adjacent cells (eight directions).
+Combat, conversion, and survival follow deterministic and probabilistic rules inspired by resource-driven strategy systems.
+
+---
+
+## Features
 
 | Category | Description |
-|-----------|-------------|
-| 🧱 **Grid Engine** | Supports grids up to **256×256** |
-| 🔁 **Turn System** | Vampires (V) and Werewolves (W) alternate turns |
-| 🧩 **Adjacency Movement** | Move in 8 directions (orthogonal + diagonal) |
-| ⚔️ **Battle Rules** | Probabilistic outcomes based on stack sizes |
-| ➗ **Multi-Move Turns** | Split stacks and perform multiple actions |
-| ⏸️ **Skip Turn Option** | Agents can skip a turn |
-| 🔍 **Pan & Zoom** | Scroll, drag, and use ⌘+/⌘− or arrows to navigate |
-| 📜 **Live Game Log** | Displays all moves, attacks, conversions, results |
-| 🔁 **Quick Restart** | Restart with same or randomized parameters |
-| 🧠 **AI Port** | Plug any AI model (MCTS, RL, policy network, etc.) |
-| 🎲 **Random Agent** | Built-in random baseline AI |
+|---------|-------------|
+| Grid Engine | Scales up to 256×256 tiles |
+| Turn System | Vampires (V) and Werewolves (W) alternate turns |
+| Adjacency Movement | Move in eight directions (orthogonal and diagonal) |
+| Battle Rules | Probabilistic outcomes based on stack sizes |
+| Multi-Move Turns | Split stacks and perform several moves per turn |
+| Skip Turn Option | Allows a player or agent to skip |
+| Pan & Zoom | Scroll, drag, or use hotkeys to navigate |
+| Live Game Log | Displays all moves, attacks, conversions, and results |
+| Quick Restart | Restart with identical or randomized parameters |
+| AI Port | Supports any AI model (MCTS, RL, policy networks, etc.) |
+| Random Agent | Included baseline agent |
 
 ---
 
-## 🧩 Project Structure
+## Project Structure
 
-```
 project/
 ├── core/
-│   ├── state.py           # Game logic & rules
+│   ├── state.py           # Game logic and rules
 │   ├── config.py          # Configuration dataclass
 │   ├── agent_base.py      # Abstract AI interface
 │   ├── random_agent.py    # Baseline random AI agent
 │   └── mcts_agent.py      # Placeholder for future MCTS
 │
 ├── gui/
-│   ├── menu.py            # Main menu (parameters, random toggles, play modes)
-│   ├── board.py           # Game board, event handling, AI execution
+│   ├── menu.py            # Main menu and mode selection
+│   ├── board.py           # Game board, events, AI integration
 │
-├── main.py                # Entry point
+├── main.py                # Program entry point
 ├── testmap2.xml           # Example map
 ├── thetrap.xml            # Example map
 └── README.md
-```
 
 ---
 
-## 🧠 Game Rules
+## Game Rules
 
-### 🎯 Movement
-- Move to any of the 8 adjacent cells.
-- Split stacks freely (e.g., move 3 left, 4 up, 3 stay).
-- Once a stack or sub-stack moves, it cannot move again that turn.
+### Movement
+- Units may move to any adjacent tile (eight directions).
+- Stacks may be split arbitrarily (for example, move part of a group while leaving the rest).
+- A unit or sub-unit that has moved cannot move again during the same turn.
 
-### ⚔️ Combat
-| Situation | Outcome |
-|------------|----------|
-| **Empty Cell** | Units simply move in. |
-| **Humans** | If attackers ≥ humans → all convert.<br>Otherwise, probability `P` decides per-unit outcomes.<br>`P = E1/(2E2)` if weaker, or `(E1/E2) - 0.5` if stronger. |
-| **Enemy Units** | If attackers ≥ 1.5× defenders → defenders die.<br>If defenders ≥ 1.5× attackers → attackers die.<br>Otherwise, each unit’s fate decided using `P`. |
+### Combat
 
-### 🏁 Turn End
-- Press **Spacebar** or click **Next Turn**.
-- Game automatically detects **win/draw** when one or both species are extinct.
+Situation | Outcome
+--------- | --------
+Empty Cell | Units enter with no resistance.
+Humans | If attackers ≥ humans: all humans convert. If attackers < humans: probabilistic resolution using P. P = E1/(2E2) when weaker, or (E1/E2) - 0.5 when stronger.
+Enemy Units | If attackers ≥ 1.5× defenders: defenders are eliminated. If defenders ≥ 1.5× attackers: attackers are eliminated. Otherwise: probabilistic per-unit resolution using P.
+
+### Turn End
+- Press Spacebar or click “Next Turn”.
+- The game automatically detects end conditions when one or both species are eliminated.
 
 ---
 
-## 🖥️ Installation
+## Installation
 
-### 1️⃣ Clone Repository
-```bash
+### 1. Clone Repository
 git clone https://github.com/yourusername/vampires-vs-werewolves.git
 cd vampires-vs-werewolves
-```
 
-### 2️⃣ Create Environment & Install
-```bash
+### 2. Create Environment and Install Dependencies
 python3 -m venv venv
 source venv/bin/activate
 pip install numpy
-```
 
-### 3️⃣ Run
-```bash
+### 3. Run
 python main.py
-```
 
 ---
 
-## 🎮 Controls
+## Controls
 
-| Action | Key / Mouse |
-|--------|--------------|
-| **Select cell** | Left click |
-| **Pan map** | Middle drag / Arrow keys |
-| **Zoom** | Mouse wheel / ⌘ + / ⌘ − |
-| **Next Turn** | Spacebar |
-| **Restart Game** | Restart button |
-| **Back to Menu** | Back button |
+Action | Key / Mouse
+-------|-------------
+Select cell | Left click
+Pan map | Middle drag or arrow keys
+Zoom | Mouse wheel or keyboard shortcuts
+Next Turn | Spacebar
+Restart Game | Restart button
+Back to Menu | Back button
 
 ---
 
-## 🧩 AI Integration
+## AI Integration
 
 ### Base Agent Interface
-All AI models must inherit from `Agent` in `core/agent_base.py` and implement:
-```python
-def select_action(self, state) -> list[tuple[int,int,int,int,int]]:
+
+All AI models must inherit from Agent in core/agent_base.py and implement:
+
+def select_action(self, state) -> list[tuple[int, int, int, int, int]]:
     '''
-    Decide moves given current GameState.
-    Return [(r1,c1,r2,c2,num), ...] or [] to skip turn.
+    Decide moves for a given GameState.
+    Return [(r1, c1, r2, c2, num), ...] or [] to skip the turn.
     '''
-```
 
 ---
 
-## 📊 What Models Receive as Input
+## What Models Receive as Input
 
-Each time `.select_action(state)` is called, your model receives a **GameState** object.
+Each invocation of select_action(state) provides a GameState instance.
 
-| Attribute | Type | Description |
-|------------|------|-------------|
-| `state.rows`, `state.cols` | int | Board size |
-| `state.turn` | str | `"V"` or `"W"` |
-| `state.grid[r][c]` | Cell | Holds `humans`, `vampires`, `werewolves` |
-| `state.in_bounds(r,c)` | bool | Valid coordinate check |
-| `state.is_adjacent(r1,c1,r2,c2)` | bool | Checks move validity |
-
----
-
-## 🧠 Model Output Requirements
-
-The agent must output a list of moves:
-```python
-[(r1, c1, r2, c2, num), (r3, c3, r4, c4, num2), ...]
-```
-
-- Each tuple = one move  
-- Return an empty list `[]` to skip turn  
-- Moves must be adjacent (engine revalidates)
+Attribute | Type | Description
+----------|------|------------
+rows, cols | int | Board dimensions
+turn | str | "V" or "W"
+grid[r][c] | Cell | Contains humans, vampires, werewolves
+in_bounds(r, c) | bool | Checks coordinate validity
+is_adjacent(r1, c1, r2, c2) | bool | Validates adjacency
 
 ---
 
-## 🧪 Headless Training Mode
+## Model Output Requirements
 
-To simulate AI vs AI without GUI:
-```python
+Agents must return a list of moves, each defined as:
+
+[(r1, c1, r2, c2, num), ...]
+
+- Each tuple represents one movement of a specific number of units.
+- An empty list [] means the agent skips the turn.
+- All moves must target adjacent cells (validated by the engine).
+
+---
+
+## Headless Training Mode
+
+Example for running AI vs AI without the GUI:
+
 from core.state import GameState
 from core.random_agent import RandomAgent
 from core.my_model_agent import MyModelAgent
 
 state = GameState(20, 20, 0.3)
-vamp, wolf = MyModelAgent("weights.pth"), RandomAgent()
+vamp = MyModelAgent("weights.pth")
+wolf = RandomAgent()
 
 while not state.check_end_condition():
     agent = vamp if state.turn == "V" else wolf
@@ -174,19 +167,18 @@ while not state.check_end_condition():
     state.next_turn()
 
 print(state.check_end_condition())
-```
 
 ---
 
-## 🧱 Summary
+## Summary
 
-✅ Fully functional, modular, expandable AI strategy environment  
-✅ Works with any Python ML model  
-✅ Supports visual + headless play modes  
-✅ Clear agent interface for consistent integration  
+- Modular, extensible AI strategy environment
+- Compatible with any Python machine learning model
+- Supports both graphical and headless execution
+- Provides a clear and consistent agent interface
 
-To plug in your model:
-1. Inherit from `Agent`  
-2. Implement `select_action(state)`  
-3. Return a list of legal moves  
-4. Run the game — you’re live 🎮
+To integrate your model:
+1. Inherit from Agent
+2. Implement select_action(state)
+3. Return a list of valid moves
+4. Run the environment to begin evaluation
