@@ -20,6 +20,10 @@ class HeuristicParams:
     backtrack_penalty: float = 1.5     # discourage ping-pong
     lock_weight: float = 1.25          # softly bias towards previous target
     dir_to_human_bias: float = 0.15    # small push toward nearest human
+    # New params from improved algorithm
+    kappa: float = 3.0       # sigmoid sharpness for human favorability
+    epsilon: float = 1.0     # sigmoid offset to avoid division issues
+    threat_gamma: float = 0.5  # weight of adjacent enemy threat
 
 class HeuristicAgent(Agent):
     def __init__(self, params: Optional[HeuristicParams]=None):
@@ -78,36 +82,128 @@ class HeuristicAgent(Agent):
 
     # ----------------- SCORING -----------------
     def _score_humans(self, state: GameState):
-        R,C = state.rows, state.cols
-        Hscore = np.zeros((R,C))
-        for (r,c), s in self._our_stacks(state):
-            for i in range(R):
-                for j in range(C):
-                    h = state.grid[i,j].humans
-                    if h <= 0: 
-                        continue
-                    d = max(abs(r-i), abs(c-j))
-                    gain = h if s >= h else s / (2*h)
-                    Hscore[i,j] += gain * math.exp(-self.p.lambda_K * d)
+        """
+        U^H from PDF eq (4): Score human cells accounting for enemy competition.
+
+        For each human cell, compute:
+          - Our favorability: g_H(our_units, humans) weighted by distance
+          - Enemy favorability: g_H(enemy_units, humans) weighted by their distance
+          - Net value = our_gain - enemy_gain (we want cells where we have advantage)
+        """
+        R, C = state.rows, state.cols
+        Hscore = np.zeros((R, C))
+
+        # Precompute enemy stack info for efficiency
+        enemy_stacks = list(self._enemy_stacks(state))
+
+        # Find all human cells
+        human_cells = []
+        for i in range(R):
+            for j in range(C):
+                h = state.grid[i, j].humans
+                if h > 0:
+                    human_cells.append((i, j, h))
+
+        if not human_cells:
+            return Hscore
+
+        # For each human cell, compute competitive value
+        for (hi, hj, h) in human_cells:
+            # Our potential gain from this human cell
+            our_value = 0.0
+            for (r, c), s in self._our_stacks(state):
+                d = max(abs(r - hi), abs(c - hj))  # Chebyshev distance
+                K = math.exp(-self.p.lambda_K * d)
+                gain = self._human_favorability(s, h)
+                our_value += gain * K
+
+            # Enemy's potential gain from this human cell
+            enemy_value = 0.0
+            for (er, ec), e in enemy_stacks:
+                d = max(abs(er - hi), abs(ec - hj))
+                K = math.exp(-self.p.lambda_K * d)
+                gain = self._human_favorability(e, h)
+                enemy_value += gain * K
+
+            # Net value: positive if we have advantage, negative if enemy does
+            # This makes the agent prefer humans it can reach before the enemy
+            Hscore[hi, hj] = our_value - enemy_value
+
         return Hscore
 
     def _score_enemies(self, state: GameState):
-        R,C = state.rows, state.cols
-        Escore = np.zeros((R,C))
-        for (r,c), s in self._our_stacks(state):
-            for i in range(R):
-                for j in range(C):
-                    e = self._enemy_at(state, i, j)
-                    if e <= 0:
-                        continue
-                    d = max(abs(r-i), abs(c-j))
-                    if s >= 1.5 * e:
-                        # attractive target
-                        Escore[i,j] += 1.0 * math.exp(-self.p.lambda_K * d)
-                    elif e >= 1.5 * s:
-                        # local danger at our origin
-                        Escore[r,c] -= 1.0 * math.exp(-self.p.lambda_K * d)
+        """
+        U^M from PDF eq (7): Score enemy cells and apply threat penalty.
+
+        For each enemy cell:
+          - Compute h_M(our_units, enemy) weighted by distance
+          - Subtract enemy's h_M(enemy_units, our_units) (their view of attacking us)
+          - Apply threat penalty for adjacent dangerous enemies
+        """
+        R, C = state.rows, state.cols
+        Escore = np.zeros((R, C))
+
+        our_stacks = list(self._our_stacks(state))
+        enemy_stacks = list(self._enemy_stacks(state))
+
+        if not enemy_stacks:
+            return Escore
+
+        # Compute median enemy stack size for reference
+        enemy_sizes = [e for _, e in enemy_stacks]
+        median_enemy = sorted(enemy_sizes)[len(enemy_sizes) // 2] if enemy_sizes else 1
+
+        for (ei, ej), e in enemy_stacks:
+            # Our combat value against this enemy
+            our_combat_value = 0.0
+            for (r, c), s in our_stacks:
+                d = max(abs(r - ei), abs(c - ej))
+                K = math.exp(-self.p.lambda_K * d)
+                utility = self._combat_utility(s, e)
+                our_combat_value += utility * K
+
+            # Enemy's combat value against us (how much they want to attack us)
+            enemy_combat_value = 0.0
+            for (r, c), s in our_stacks:
+                d = max(abs(ei - r), abs(ej - c))
+                K = math.exp(-self.p.lambda_K * d)
+                # From enemy's perspective: they attack us
+                utility = self._combat_utility(e, s)
+                enemy_combat_value += utility * K
+
+            # Net value: positive if we should attack, negative if dangerous
+            Escore[ei, ej] = our_combat_value - enemy_combat_value
+
+        # Apply threat penalty: dangerous enemies adjacent to our stacks
+        # This makes us want to move AWAY from cells near strong enemies
+        for (r, c), s in our_stacks:
+            threat = self._compute_threat(state, r, c, s)
+            # Reduce value of our current position if threatened
+            Escore[r, c] -= self.p.threat_gamma * threat
+
         return Escore
+
+    def _compute_threat(self, state: GameState, r: int, c: int, s: int) -> float:
+        """
+        Threat from adjacent enemies (PDF eq 6).
+        Enemies in N8 can attack us next turn - penalize if they overpower us.
+        """
+        threat = 0.0
+        for dr in (-1, 0, 1):
+            for dc in (-1, 0, 1):
+                if dr == 0 and dc == 0:
+                    continue
+                rr, cc = r + dr, c + dc
+                if not state.in_bounds(rr, cc):
+                    continue
+                e = self._enemy_at(state, rr, cc)
+                if e > 0:
+                    # h_M from enemy's perspective (negative for us if they're stronger)
+                    utility = self._combat_utility(e, s)
+                    # Only count as threat if enemy has advantage (utility > 0 for them)
+                    if utility > 0:
+                        threat += utility
+        return threat
 
     def _score_joining(self, state: GameState):
         R,C = state.rows, state.cols
@@ -174,11 +270,16 @@ class HeuristicAgent(Agent):
 
     # ----------------- MOVE SELECTION -----------------
     def _best_step(self, state: GameState, r, c, s, V, used):
+        """
+        Select best adjacent cell to move into.
+        CRITICAL: Avoid cells where we'd lose (humans > us, or enemy overpowers us).
+        """
         best = None
         bestv = -1e9
-        last_dst = self._last_dest_by_src.get((r,c))
-        for dr in (-1,0,1):
-            for dc in (-1,0,1):
+        last_dst = self._last_dest_by_src.get((r, c))
+
+        for dr in (-1, 0, 1):
+            for dc in (-1, 0, 1):
                 if dr == 0 and dc == 0:
                     continue
                 rr, cc = r + dr, c + dc
@@ -189,23 +290,59 @@ class HeuristicAgent(Agent):
                 # avoid immediate backtrack to previous dst
                 if last_dst is not None and (rr, cc) == last_dst:
                     continue
+
+                # SAFETY CHECK: Don't step into cells where we'd likely lose
+                if not self._is_safe_to_enter(state, rr, cc, s):
+                    continue
+
                 val = V[rr, cc]
                 if val > bestv:
                     bestv = val
                     best = (rr, cc)
-        # if everything filtered out, allow the best neighbor anyway
+
+        # if everything filtered out due to safety, find safest option
         if best is None:
-            for dr in (-1,0,1):
-                for dc in (-1,0,1):
+            for dr in (-1, 0, 1):
+                for dc in (-1, 0, 1):
                     if dr == 0 and dc == 0:
                         continue
                     rr, cc = r + dr, c + dc
-                    if state.in_bounds(rr, cc) and (rr, cc) not in used:
-                        val = V[rr, cc]
-                        if val > bestv:
-                            bestv = val
-                            best = (rr, cc)
+                    if not state.in_bounds(rr, cc):
+                        continue
+                    if (rr, cc) in used:
+                        continue
+                    # In fallback, still prefer safe cells but accept any if none safe
+                    safety_bonus = 100.0 if self._is_safe_to_enter(state, rr, cc, s) else 0.0
+                    val = V[rr, cc] + safety_bonus
+                    if val > bestv:
+                        bestv = val
+                        best = (rr, cc)
         return best
+
+    def _is_safe_to_enter(self, state: GameState, r: int, c: int, our_count: int) -> bool:
+        """
+        Check if it's safe for our_count units to enter cell (r, c).
+        Safe means:
+          - Empty cell: always safe
+          - Humans: safe if we outnumber them (guaranteed conversion)
+          - Enemy: safe if we have 1.5x advantage (guaranteed win)
+        """
+        cell = state.grid[r, c]
+
+        # Check humans
+        if cell.humans > 0:
+            # Only safe if we can guarantee conversion (need >= humans)
+            if our_count < cell.humans:
+                return False
+
+        # Check enemy
+        enemy = self._enemy_at(state, r, c)
+        if enemy > 0:
+            # Only safe if we overpower them (need >= 1.5x)
+            if our_count < 1.5 * enemy:
+                return False
+
+        return True
 
     # ----------------- HELPERS -----------------
     def _our_stacks(self, state: GameState):
@@ -215,9 +352,62 @@ class HeuristicAgent(Agent):
                 if s > 0:
                     yield (r,c), s
 
+    def _enemy_stacks(self, state: GameState):
+        """Iterate over enemy positions and counts."""
+        for r in range(state.rows):
+            for c in range(state.cols):
+                e = self._enemy_at(state, r, c)
+                if e > 0:
+                    yield (r, c), e
+
     def _enemy_at(self, state, r, c):
         cell = state.grid[r,c]
         return cell.werewolves if self.side == "V" else cell.vampires
+
+    def _battle_prob(self, n: int, m: int) -> float:
+        """Combat probability P(n, m) from game rules."""
+        if n == m:
+            return 0.5
+        elif n < m:
+            return n / (2 * m)
+        else:
+            return (n / m) - 0.5
+
+    def _sigmoid(self, x: float) -> float:
+        """Sigmoid function σ(x) = 1/(1+e^-x)."""
+        return 1.0 / (1.0 + math.exp(-x))
+
+    def _human_favorability(self, n: int, h: int) -> float:
+        """
+        g_H(n, H) from PDF eq (3): P(n,H) * σ(κ * min(n,H)/(H+ε))
+
+        This peaks when n ≈ H (efficient use of units).
+        Penalizes overkill (n >> H, wasting units) and underkill (n << H, risky).
+        """
+        if h <= 0:
+            return 0.0
+        p = self._battle_prob(n, h)
+        # Sigmoid term penalizes inefficiency
+        ratio = min(n, h) / (h + self.p.epsilon)
+        sig = self._sigmoid(self.p.kappa * ratio)
+        return p * sig
+
+    def _combat_utility(self, n: int, e: int) -> float:
+        """
+        h_M(n, e) from PDF eq (5):
+        +1 if n >= 1.5*e (we overpower)
+        -1 if e >= 1.5*n (they overpower us)
+        2*P(n,e) - 1 otherwise (maps P ∈ [0,1] to [-1,1])
+        """
+        if e <= 0:
+            return 0.0
+        if n >= 1.5 * e:
+            return 1.0
+        elif e >= 1.5 * n:
+            return -1.0
+        else:
+            p = self._battle_prob(n, e)
+            return 2 * p - 1  # maps [0,1] -> [-1,1]
 
     def _has_easy_target_near(self, state, r, c, s):
         # easy humans or overpowering enemy in N8
