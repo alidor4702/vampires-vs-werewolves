@@ -24,6 +24,8 @@ class HeuristicParams:
     kappa: float = 3.0       # sigmoid sharpness for human favorability
     epsilon: float = 1.0     # sigmoid offset to avoid division issues
     threat_gamma: float = 0.5  # weight of adjacent enemy threat
+    # Immediate capture bonus - "bird in hand" principle
+    immediate_capture_bonus: float = 50.0  # huge bonus for adjacent safe captures
 
 class HeuristicAgent(Agent):
     def __init__(self, params: Optional[HeuristicParams]=None):
@@ -46,6 +48,7 @@ class HeuristicAgent(Agent):
         UH = self._score_humans(state)
         UM = self._score_enemies(state)
         UJ = self._score_joining(state)
+        UI = self._score_immediate_opportunities(state)  # "Bird in hand" bonus
 
         # Combined board value
         V = self.p.human_weight * UH + self.p.enemy_weight * UM + UJ
@@ -53,6 +56,9 @@ class HeuristicAgent(Agent):
         # Light normalization to avoid flat maps on sparse boards
         abs_mean = float(np.mean(np.abs(V))) + 1e-9
         V = V / abs_mean
+
+        # Add immediate opportunity bonus AFTER normalization so it dominates
+        V = V + UI
 
         # Apply gentle behavioral nudges
         V = self._apply_backtrack_penalty(state, V)
@@ -76,7 +82,7 @@ class HeuristicAgent(Agent):
                 self._last_dest_by_src[(r,c)] = (r2,c2)
                 self._target_lock[(r,c)] = (r2,c2)
 
-        self._log_state(state, UH, UM, UJ, V, moves)
+        self._log_state(state, UH, UM, UJ, UI, V, moves)
         self._last_heatmap = V
         return moves
 
@@ -218,6 +224,42 @@ class HeuristicAgent(Agent):
                 if max(abs(r-r2), abs(c-c2)) == 1:
                     J[r2,c2] += self.p.join_bonus
         return J
+
+    def _score_immediate_opportunities(self, state: GameState):
+        """
+        CRITICAL: Give massive bonus to cells we can capture RIGHT NOW.
+
+        "Bird in hand" principle - if a human/enemy is adjacent and we can
+        safely capture it, prioritize it over distant targets regardless of
+        competition scores. This prevents the agent from ignoring easy captures.
+        """
+        R, C = state.rows, state.cols
+        Iscore = np.zeros((R, C))
+
+        for (r, c), s in self._our_stacks(state):
+            # Check all adjacent cells for immediate opportunities
+            for dr in (-1, 0, 1):
+                for dc in (-1, 0, 1):
+                    if dr == 0 and dc == 0:
+                        continue
+                    rr, cc = r + dr, c + dc
+                    if not state.in_bounds(rr, cc):
+                        continue
+
+                    cell = state.grid[rr, cc]
+
+                    # Adjacent humans we can safely capture
+                    if cell.humans > 0 and s >= cell.humans:
+                        # Bonus scales with how many humans we'd gain
+                        Iscore[rr, cc] += self.p.immediate_capture_bonus * cell.humans
+
+                    # Adjacent enemies we can safely defeat
+                    enemy = self._enemy_at(state, rr, cc)
+                    if enemy > 0 and s >= 1.5 * enemy:
+                        # Bonus for eliminating enemies (smaller than human capture)
+                        Iscore[rr, cc] += self.p.immediate_capture_bonus * 0.5 * enemy
+
+        return Iscore
 
     # ----------------- BEHAVIORAL NUDGES -----------------
     def _apply_backtrack_penalty(self, state: GameState, V: np.ndarray) -> np.ndarray:
@@ -424,10 +466,11 @@ class HeuristicAgent(Agent):
         return False
 
     # ----------------- LOGGING -----------------
-    def _log_state(self, state, UH, UM, UJ, V, moves):
+    def _log_state(self, state, UH, UM, UJ, UI, V, moves):
         self._log.append("=== Turn Log ===")
         self._log.append(
-            f"means |UH|={np.mean(np.abs(UH)):.3f} |UM|={np.mean(np.abs(UM)):.3f} |UJ|={np.mean(np.abs(UJ)):.3f}"
+            f"means |UH|={np.mean(np.abs(UH)):.3f} |UM|={np.mean(np.abs(UM)):.3f} "
+            f"|UJ|={np.mean(np.abs(UJ)):.3f} |UI|={np.mean(np.abs(UI)):.3f}"
         )
         self._log.append("Top valued cells:")
         flat = [((r,c), float(V[r,c])) for r in range(state.rows) for c in range(state.cols)]
