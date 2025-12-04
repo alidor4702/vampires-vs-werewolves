@@ -260,3 +260,28 @@ class HeuristicAgent(Agent):
         moves = self.propose_moves(state)
         # keep tuple ordering consistent with board runner: (r,c,r2,c2,num)
         return [(r, c, r2, c2, num) for (r, c, num, r2, c2) in moves]
+    
+    def evaluate_state(self, state: GameState, side: str) -> float:
+        """
+        Static evaluation: how good is 'state' for 'side' (V or W).
+
+        Uses the same human/enemy/join/immediate-opportunity scores as the
+        heuristic policy, but without path-dependent nudges.
+        Positive values are good for 'side', negative bad.
+        """
+        self.side = side
+
+        UH = self._score_humans(state)
+        UM = self._score_enemies(state)
+        UJ = self._score_joining(state)
+        UI = self._score_immediate_opportunities(state)
+
+        V = self.p.human_weight * UH + self.p.enemy_weight * UM + UJ
+
+        abs_mean = float(np.mean(np.abs(V))) + 1e-9
+        V = V / abs_mean
+        V = V + UI
+
+        # Scalar score: sum over board
+        return float(np.sum(V))
+

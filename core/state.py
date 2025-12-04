@@ -251,3 +251,29 @@ class GameState:
         elif W == 0:
             return "Vampires win! All werewolves eliminated."
         return None
+    
+    def clone(self) -> "GameState":
+        """Lightweight deep copy of the game state for search."""
+        new = GameState.__new__(GameState)  # bypass __init__
+        new.rows = self.rows
+        new.cols = self.cols
+        new.turn = self.turn
+
+        # Deep copy grid contents
+        new.grid = np.empty((self.rows, self.cols), dtype=object)
+        for r in range(self.rows):
+            for c in range(self.cols):
+                cell = self.grid[r, c]
+                new.grid[r, c] = Cell(
+                    humans=cell.humans,
+                    vampires=cell.vampires,
+                    werewolves=cell.werewolves
+                )
+
+        # Movement bookkeeping
+        new.log = []  # no need to copy logs in internal search
+        new.targets_used_this_turn = set(self.targets_used_this_turn)
+        new.movable = self.movable.copy()
+
+        return new
+

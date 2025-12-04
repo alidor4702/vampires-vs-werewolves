@@ -9,6 +9,8 @@ from core.random_agent import RandomAgent
 from core.mcts_agent_new import MCTSAgent
 from core.heuristic_agent import HeuristicAgent
 from core.simple_agent import SimpleHeuristicAgent
+from core.meta_agent import MetaAgent
+from core.alphabeta_agent import AlphaBetaAgentV2
 
 
 
@@ -46,12 +48,12 @@ class GameBoard(tk.Frame):
 
         # 🔹 AI agent initialization
         if self.config.mode == "AI":
-            self.ai_agent_w = HeuristicAgent()  # Werewolves
+            self.ai_agent_w = MetaAgent()  # Werewolves
             self.ai_agent_v = None  # Vampires (human player)
         elif self.config.mode == "AI_vs_AI":
             # AI vs AI mode
-            self.ai_agent_v = MCTSAgent(time_limit=1.9)  # Vampires
-            self.ai_agent_w = HeuristicAgent()  # Werewolves
+            self.ai_agent_v = AlphaBetaAgentV2()  # Vampires
+            self.ai_agent_w = MetaAgent()  # Werewolves
         else:
             self.ai_agent_v = None
             self.ai_agent_w = None
