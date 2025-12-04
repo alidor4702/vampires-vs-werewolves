@@ -30,11 +30,14 @@ def get_game_state_info(state):
     return my_positions, enemy_positions, human_positions
 
 
-def evaluate_move_priority(state, move, my_pos, enemy_pos, human_pos):
-    """Evaluate move priority score - SIMPLE and FAST."""
-    r1, c1, r2, c2, num = move
+def evaluate_move_priority(state, r1, c1, r2, c2, num, my_pos, enemy_pos, human_pos):
+    """Evaluate move priority score - SIMPLE and FAST.
+
+    Note: this function expects explicit parameters (r1,c1,r2,c2,num) to match
+    the internal ordering used when applying moves: move_group(r1,c1,num,r2,c2).
+    """
     dst = state.grid[r2, c2]
-    
+
     my_total = sum(c for _, _, c in my_pos)
     enemy_total = sum(c for _, _, c in enemy_pos)
     
@@ -61,7 +64,7 @@ def evaluate_move_priority(state, move, my_pos, enemy_pos, human_pos):
         min_dist_dest = min(abs(r2-hr)+abs(c2-hc) for hr,hc,_ in human_pos)
         # Distance from source to closest human
         min_dist_src = min(abs(r1-hr)+abs(c1-hc) for hr,hc,_ in human_pos)
-        
+
         if min_dist_dest < min_dist_src:
             # Moving closer - GOOD
             # Find which human
@@ -103,9 +106,14 @@ class Node:
         self.untried_actions = self.get_legal_moves_by_distance(state)
     
     def get_legal_moves_by_distance(self, state):
-        """Generate moves sorted by strategic priority."""
+        """Generate moves sorted by strategic priority.
+
+        To keep complexity manageable on large boards we dynamically reduce the
+        number of moves considered (top_k) based on board area. Internally we
+        produce moves in the order expected by GameState.move_group: (r1,c1,num,r2,c2).
+        """
         my_pos, enemy_pos, human_pos = get_game_state_info(state)
-        
+
         moves = []
         for r in range(state.rows):
             for c in range(state.cols):
@@ -118,13 +126,19 @@ class Node:
                                 continue
                             r2, c2 = r + dr, c + dc
                             if state.in_bounds(r2, c2):
-                                move = (r, c, r2, c2, num)
-                                priority = evaluate_move_priority(state, move, my_pos, enemy_pos, human_pos)
+                                # Internal ordering: r,c,num,r2,c2 to match move_group
+                                move = (r, c, num, r2, c2)
+                                # evaluate_move_priority expects r1,c1,r2,c2,num
+                                priority = evaluate_move_priority(state, r, c, r2, c2, num, my_pos, enemy_pos, human_pos)
                                 moves.append((priority, move))
-        
-        # Sort by priority (highest first) and return moves only
+
+        # Sort by priority (highest first)
         moves.sort(reverse=True, key=lambda x: x[0])
-        return [move for priority, move in moves[:30]]  # Keep top 30 moves only
+
+        # --- dynamic top-k based on board area ---
+        area = max(1, state.rows * state.cols)
+        top_k = max(8, min(60, int(800 / area)))
+        return [move for priority, move in moves[:top_k]]
     
     def best_child(self, c_param=1.4):
         """UCB1 selection."""
@@ -145,6 +159,7 @@ class Node:
             return None
         move = self.untried_actions.pop(0)  # Take highest priority
         new_state = copy.deepcopy(self.state)
+        # 'move' is in internal order: (r1, c1, num, r2, c2)
         new_state.move_group(*move)
         new_state.next_turn()
         child = Node(new_state, parent=self, action=move)
@@ -152,18 +167,28 @@ class Node:
         return child
 
 
-def simple_rollout(state, root_player, max_depth=10):
-    """Quick simulation using greedy moves."""
+def simple_rollout(state, root_player, max_depth=None):
+    """Quick simulation using greedy moves.
+
+    The rollout depth and move branching are reduced on large boards to keep
+    rollouts cheap (improves simulations per second).
+    """
     s = copy.deepcopy(state)
-    
+
+    # adapt depth to board size (larger boards -> shallower rollouts)
+    R = max(1, s.rows)
+    C = max(1, s.cols)
+    if max_depth is None:
+        max_depth = max(6, int(40 / max(R, C)))
+
     for _ in range(max_depth):
         _, v, w = s.population_counts()
         if v == 0 or w == 0:
             break
-        
+
         my_pos, enemy_pos, human_pos = get_game_state_info(s)
-        
-        # Generate all legal moves
+
+        # Generate prioritized legal moves (internal ordering: r,c,num,r2,c2)
         moves = []
         for r in range(s.rows):
             for c in range(s.cols):
@@ -176,19 +201,20 @@ def simple_rollout(state, root_player, max_depth=10):
                                 continue
                             r2, c2 = r + dr, c + dc
                             if s.in_bounds(r2, c2):
-                                move = (r, c, r2, c2, num)
-                                priority = evaluate_move_priority(s, move, my_pos, enemy_pos, human_pos)
+                                move = (r, c, num, r2, c2)
+                                priority = evaluate_move_priority(s, r, c, r2, c2, num, my_pos, enemy_pos, human_pos)
                                 moves.append((priority, move))
-        
+
         if not moves:
             break
-        
-        # Pick best move (greedy)
+
+        # pick best greedy move
         moves.sort(reverse=True, key=lambda x: x[0])
         _, best_move = moves[0]
+        
         s.move_group(*best_move)
         s.next_turn()
-    
+
     # Evaluate final state
     _, v, w = s.population_counts()
     if root_player == "V":
@@ -256,5 +282,7 @@ class MCTSAgent(Agent):
             self.log.append(f"  #{i+1}: {child.action} visits={child.visits} Q={q:.3f}")
         
         self.log.append(f"[AI] Selected: {best_move.action} (Q={best_q:.3f})")
-        
-        return [best_move.action]
+        # child.action is in internal order (r1,c1,num,r2,c2). Convert to
+        # external action format expected by the GUI: (r1,c1,r2,c2,num)
+        r1, c1, num, r2, c2 = best_move.action
+        return [(r1, c1, r2, c2, num)]
